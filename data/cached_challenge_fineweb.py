@@ -1,4 +1,5 @@
 import argparse
+import concurrent.futures
 import json
 import os
 import shutil
@@ -114,6 +115,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also download docs_selected.jsonl and its sidecar for tokenizer retraining or dataset re-export.",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=max(4, min(16, (os.cpu_count() or 8))),
+        help="Number of concurrent Hugging Face downloads. Defaults to a conservative parallel setting.",
+    )
     return parser
 
 
@@ -144,13 +151,13 @@ def main() -> None:
         get(f"{REMOTE_ROOT_PREFIX}/docs_selected.source_manifest.json")
 
     dataset_prefix = f"{REMOTE_ROOT_PREFIX}/datasets/{dataset_dir}"
-    for i in range(val_shards):
-        get(f"{dataset_prefix}/fineweb_val_{i:06d}.bin")
-    for i in range(train_shards):
-        get(f"{dataset_prefix}/fineweb_train_{i:06d}.bin")
+    paths = [f"{dataset_prefix}/fineweb_val_{i:06d}.bin" for i in range(val_shards)]
+    paths.extend(f"{dataset_prefix}/fineweb_train_{i:06d}.bin" for i in range(train_shards))
+    paths.extend(f"{REMOTE_ROOT_PREFIX}/{artifact_path}" for artifact_path in artifact_paths_for_tokenizer(tokenizer_entry))
 
-    for artifact_path in artifact_paths_for_tokenizer(tokenizer_entry):
-        get(f"{REMOTE_ROOT_PREFIX}/{artifact_path}")
+    max_workers = max(1, args.jobs)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        list(executor.map(get, paths))
 
 
 if __name__ == "__main__":

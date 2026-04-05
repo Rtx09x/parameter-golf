@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import time
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TELEMETRY_ROOT = REPO_ROOT / "telemetry"
+BUNDLES_ROOT = REPO_ROOT / "bundles"
 
 TRAIN_RE = re.compile(
     r"step:(?P<step>\d+)/(?P<iters>\d+)\s+train_loss:(?P<train_loss>[0-9.]+)\s+train_time:(?P<train_time_ms>[0-9.]+)ms"
@@ -181,6 +183,29 @@ PROFILES: dict[str, list[RunProfile]] = {
             nproc_per_node=8,
         )
     ],
+    "safe-final-8x": [
+        RunProfile(
+            name="safe-final-8x",
+            script="records/track_non_record_16mb/2026-04-04_11L_XSA11_EMA_GPTQ_1xH100_PCIe/train_gpt.py",
+            run_id="safe_final_sp1024_8xh100",
+            train_shards=80,
+            env={
+                "DATA_PATH": "./data/datasets/fineweb10B_sp1024",
+                "TOKENIZER_PATH": "./data/tokenizers/fineweb_1024_bpe.model",
+                "VOCAB_SIZE": "1024",
+                "MAX_WALLCLOCK_SECONDS": "600",
+                "VAL_LOSS_EVERY": "10000",
+                "TRAIN_LOG_EVERY": "250",
+                "GPTQ_CALIB_BATCHES": "64",
+                "GATED_ATTENTION": "0",
+                "VALUE_RESIDUAL": "0",
+                "TRIGRAM": "0",
+                "DTG_ENABLED": "0",
+                "LAWA_ENABLED": "0",
+            },
+            nproc_per_node=8,
+        )
+    ],
     "first-smoke": [
         RunProfile(
             name="control-smoke",
@@ -249,7 +274,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profile",
         default="frontier-auto",
-        choices=sorted(list(PROFILES.keys()) + ["frontier-auto", "frontier-final-auto"]),
+        choices=sorted(list(PROFILES.keys()) + ["frontier-auto", "frontier-final-auto", "safe-final-auto"]),
         help="Which run profile or pipeline to execute.",
     )
     parser.add_argument(
@@ -260,11 +285,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def ensure_optional_package(module_name: str, pip_name: str) -> bool:
+def ensure_optional_package(module_name: str, pip_name: str, *, allow_install: bool = True) -> bool:
     try:
         __import__(module_name)
         return True
     except Exception:
+        if not allow_install:
+            return False
         subprocess.run(
             [sys.executable, "-m", "pip", "install", pip_name],
             cwd=REPO_ROOT,
@@ -412,6 +439,8 @@ def ensure_data(profile: RunProfile, console: Any) -> None:
             variant,
             "--train-shards",
             str(train_shards),
+            "--jobs",
+            str(max(8, min(32, os.cpu_count() or 16))),
         ],
         env=data_env,
         console=console,
@@ -462,6 +491,13 @@ def resolve_profiles(profile_name: str, console: Any) -> list[RunProfile]:
             "warn",
         )
         return PROFILES["branch-screen-4k"]
+    if profile_name == "safe-final-auto":
+        gpu_count = visible_gpu_count()
+        if gpu_count >= 8:
+            print_status(console, "safe-final-auto: 8+ visible GPUs; using safe-final-8x", "ok")
+            return PROFILES["safe-final-8x"]
+        print_status(console, f"safe-final-auto: only {gpu_count} visible GPU(s); need 8 for final run", "err")
+        raise SystemExit(2)
     return PROFILES[profile_name]
 
 
@@ -489,7 +525,7 @@ def run_preflight(profile: RunProfile, console: Any) -> None:
     )
 
 
-def consume_training_output(profile: RunProfile, console: Any) -> int:
+def consume_training_output(profile: RunProfile, console: Any, *, allow_optional_installs: bool) -> int:
     env = os.environ.copy()
     env.update(profile.env)
     env["RUN_ID"] = profile.run_id
@@ -499,7 +535,7 @@ def consume_training_output(profile: RunProfile, console: Any) -> int:
     telemetry = Telemetry(
         run_id=profile.run_id,
         console=console,
-        plots_enabled=ensure_optional_package("matplotlib", "matplotlib"),
+        plots_enabled=ensure_optional_package("matplotlib", "matplotlib", allow_install=allow_optional_installs),
     )
     telemetry.update_summary(profile=profile.name, script=profile.script)
 
@@ -581,7 +617,38 @@ def consume_training_output(profile: RunProfile, console: Any) -> int:
     print_status(console, f"telemetry saved to {telemetry.root}", "ok" if proc.returncode == 0 else "warn")
     if telemetry.plot_path.exists():
         print_status(console, f"plot saved to {telemetry.plot_path}", "ok")
+    if proc.returncode == 0:
+        bundle_path = create_bundle(profile, console)
+        if bundle_path is not None:
+            print_status(console, f"bundle saved to {bundle_path}", "ok")
     return proc.returncode
+
+
+def create_bundle(profile: RunProfile, console: Any) -> Path | None:
+    BUNDLES_ROOT.mkdir(parents=True, exist_ok=True)
+    bundle_path = BUNDLES_ROOT / f"{profile.run_id}.zip"
+    log_path = REPO_ROOT / "logs" / f"{profile.run_id}.txt"
+    telemetry_root = TELEMETRY_ROOT / profile.run_id
+    candidates = [
+        REPO_ROOT / "final_model_pre_quant.pt",
+        REPO_ROOT / "final_model.pt",
+        REPO_ROOT / "final_model.int6.ptz",
+        REPO_ROOT / profile.script,
+        log_path,
+    ]
+    try:
+        with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_STORED) as zf:
+            for path in candidates:
+                if path.is_file():
+                    zf.write(path, path.relative_to(REPO_ROOT))
+            if telemetry_root.is_dir():
+                for path in telemetry_root.rglob("*"):
+                    if path.is_file():
+                        zf.write(path, path.relative_to(REPO_ROOT))
+        return bundle_path
+    except Exception as exc:
+        print_status(console, f"bundle creation failed: {exc}", "warn")
+        return None
 
 
 def main() -> None:
@@ -599,7 +666,7 @@ def main() -> None:
         print_status(console, f"starting {profile.name}", "ok")
         ensure_data(profile, console)
         run_preflight(profile, console)
-        return_code = consume_training_output(profile, console)
+        return_code = consume_training_output(profile, console, allow_optional_installs=not args.skip_install)
         if return_code != 0:
             raise SystemExit(return_code)
 
