@@ -1789,6 +1789,17 @@ def main() -> None:
         for lid in base_model.recur_layer_ids:
             matrix_params.append(base_model.recur_mlp_up[str(lid)])
             matrix_params.append(base_model.recur_mlp_down[str(lid)])
+    def _unique_params(params):
+        seen: set[int] = set()
+        unique = []
+        for p in params:
+            pid = id(p)
+            if pid in seen:
+                continue
+            seen.add(pid)
+            unique.append(p)
+        return unique
+
     block_named_params = list(base_model.blocks.named_parameters())
     scalar_params = [
         p
@@ -1819,6 +1830,7 @@ def main() -> None:
         scalar_params.append(base_model.ve_shared.scale)
         for s in base_model.ve_layer_scales:
             scalar_params.append(s)
+    scalar_params = _unique_params(scalar_params)
     optimizer_tok = torch.optim.AdamW(
         tok_params,
         betas=(args.beta1, args.beta2),
@@ -1848,6 +1860,7 @@ def main() -> None:
     for pg in optimizer_tok.param_groups[1:]:
         replicated_params.extend(pg["params"])
     replicated_params.extend(scalar_params)
+    replicated_params = _unique_params(replicated_params)
 
     optimizer_head = None
     if base_model.lm_head is not None:
