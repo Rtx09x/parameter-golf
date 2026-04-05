@@ -424,13 +424,44 @@ def _has_local_sp4096() -> bool:
     return dataset_dir.is_dir() and tokenizer.is_file() and any(dataset_dir.glob("fineweb_train_*.bin"))
 
 
+def visible_gpu_count() -> int:
+    try:
+        import torch
+
+        return int(torch.cuda.device_count())
+    except Exception:
+        pass
+
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        return len(lines)
+    except Exception:
+        return 0
+
+
 def resolve_profiles(profile_name: str, console: Any) -> list[RunProfile]:
     if profile_name == "frontier-auto":
-        print_status(console, "frontier-auto: using sp4096 branch-screen-4k", "ok")
+        gpu_count = visible_gpu_count()
+        print_status(console, f"frontier-auto: {gpu_count} visible GPU(s); using sp4096 branch-screen-4k", "ok")
         return PROFILES["branch-screen-4k"]
     if profile_name == "frontier-final-auto":
-        print_status(console, "frontier-final-auto: using sp4096 branch-final-4k-8x", "ok")
-        return PROFILES["branch-final-4k-8x"]
+        gpu_count = visible_gpu_count()
+        if gpu_count >= 8:
+            print_status(console, "frontier-final-auto: 8+ visible GPUs; using sp4096 branch-final-4k-8x", "ok")
+            return PROFILES["branch-final-4k-8x"]
+        print_status(
+            console,
+            f"frontier-final-auto: only {gpu_count} visible GPU(s); falling back to sp4096 branch-screen-4k",
+            "warn",
+        )
+        return PROFILES["branch-screen-4k"]
     return PROFILES[profile_name]
 
 
