@@ -119,6 +119,8 @@ PROFILES: dict[str, list[RunProfile]] = {
                 "DATA_PATH": "./data/datasets/fineweb10B_sp4096",
                 "TOKENIZER_PATH": "./data/tokenizers/fineweb_4096_bpe.model",
                 "VOCAB_SIZE": "4096",
+                "MATCHED_FINEWEB_REPO_ID": "kevclark/parameter-golf",
+                "MATCHED_FINEWEB_REMOTE_ROOT_PREFIX": "datasets",
                 "BIGRAM_VOCAB_SIZE": "0",
                 "SMEAR_ENABLED": "0",
                 "PARALLEL_START_LAYER": "7",
@@ -141,6 +143,8 @@ PROFILES: dict[str, list[RunProfile]] = {
                 "DATA_PATH": "./data/datasets/fineweb10B_sp4096",
                 "TOKENIZER_PATH": "./data/tokenizers/fineweb_4096_bpe.model",
                 "VOCAB_SIZE": "4096",
+                "MATCHED_FINEWEB_REPO_ID": "kevclark/parameter-golf",
+                "MATCHED_FINEWEB_REMOTE_ROOT_PREFIX": "datasets",
                 "BIGRAM_VOCAB_SIZE": "0",
                 "SMEAR_ENABLED": "0",
                 "PARALLEL_START_LAYER": "7",
@@ -395,12 +399,11 @@ def ensure_data(profile: RunProfile, console: Any) -> None:
         print_status(console, f"dataset already has {existing} train shards; need {train_shards}", "ok")
         return
     variant = f"sp{profile.env['VOCAB_SIZE']}"
+    data_env = os.environ.copy()
+    data_env.update({k: v for k, v in profile.env.items() if k.startswith("MATCHED_FINEWEB_")})
     if profile.env["VOCAB_SIZE"] != "1024":
-        print_status(
-            console,
-            f"downloading {variant} via cached_challenge_fineweb.py requires that variant to exist in data/manifest.json; if this fails, prepare the 4k dataset first",
-            "warn",
-        )
+        repo_id = profile.env.get("MATCHED_FINEWEB_REPO_ID", "willdepueoai/parameter-golf")
+        print_status(console, f"downloading {variant} from {repo_id}", "info")
     run_checked(
         [
             sys.executable,
@@ -410,6 +413,7 @@ def ensure_data(profile: RunProfile, console: Any) -> None:
             "--train-shards",
             str(train_shards),
         ],
+        env=data_env,
         console=console,
     )
 
@@ -422,17 +426,11 @@ def _has_local_sp4096() -> bool:
 
 def resolve_profiles(profile_name: str, console: Any) -> list[RunProfile]:
     if profile_name == "frontier-auto":
-        if _has_local_sp4096():
-            print_status(console, "frontier-auto: using sp4096 branch-screen-4k", "ok")
-            return PROFILES["branch-screen-4k"]
-        print_status(console, "frontier-auto: sp4096 data not present; falling back to sp1024 branch-screen", "warn")
-        return PROFILES["branch-screen"]
+        print_status(console, "frontier-auto: using sp4096 branch-screen-4k", "ok")
+        return PROFILES["branch-screen-4k"]
     if profile_name == "frontier-final-auto":
-        if _has_local_sp4096():
-            print_status(console, "frontier-final-auto: using sp4096 branch-final-4k-8x", "ok")
-            return PROFILES["branch-final-4k-8x"]
-        print_status(console, "frontier-final-auto: sp4096 data not present; falling back to sp1024 branch-final-8x", "warn")
-        return PROFILES["branch-final-8x"]
+        print_status(console, "frontier-final-auto: using sp4096 branch-final-4k-8x", "ok")
+        return PROFILES["branch-final-4k-8x"]
     return PROFILES[profile_name]
 
 
