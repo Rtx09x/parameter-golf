@@ -88,6 +88,12 @@ def try_install_mamba3_cache():
 if not has_mamba3():
     subprocess.call([sys.executable, "-m", "pip", "uninstall", "-y", "mamba-ssm", "causal-conv1d"])
 if not has_mamba3() and not try_install_mamba3_cache():
+    require_cache = __import__("os").environ.get("PGOLF_MAMBA3_REQUIRE_CACHE", "0") == "1"
+    if require_cache:
+        raise SystemExit(
+            "Mamba3 HF wheel cache was required but could not be installed. "
+            "Set HF_TOKEN or save /root/.cache/huggingface/token before running."
+        )
     env = dict(__import__("os").environ)
     env["MAMBA_FORCE_BUILD"] = "TRUE"
     env["CAUSAL_CONV1D_FORCE_BUILD"] = "TRUE"
