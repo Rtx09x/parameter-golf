@@ -18,7 +18,7 @@ Default V1:
 | Component | Value |
 |---|---:|
 | Backbone | official `Mamba3` |
-| Blocks | `10` |
+| Blocks | `9` |
 | Model dim | `512` |
 | State dim | `128` |
 | Head dim | `64` |

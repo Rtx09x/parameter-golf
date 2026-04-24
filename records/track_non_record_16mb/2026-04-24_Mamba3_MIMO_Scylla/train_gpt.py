@@ -44,7 +44,7 @@ class Hyperparameters:
     run_sliding_eval = bool(int(os.environ.get("RUN_SLIDING_EVAL", "1")))
 
     model_dim = int(os.environ.get("MODEL_DIM", 512))
-    num_layers = int(os.environ.get("NUM_LAYERS", 10))
+    num_layers = int(os.environ.get("NUM_LAYERS", 9))
     d_state = int(os.environ.get("MAMBA_D_STATE", 128))
     headdim = int(os.environ.get("MAMBA_HEADDIM", 64))
     expand = int(os.environ.get("MAMBA_EXPAND", 2))
