@@ -78,6 +78,22 @@ class Hyperparameters:
     lzma_preset = int(os.environ.get("LZMA_PRESET", 9))
     temp_scaling = bool(int(os.environ.get("TEMP_SCALING", "1")))
     temp_grid = os.environ.get("TEMP_GRID", "0.85,0.90,0.95,1.00,1.05,1.10")
+    temp_eval_during_train = bool(int(os.environ.get("TEMP_EVAL_DURING_TRAIN", "0")))
+
+
+def log_temp_sweep(args, model, rank, world_size, device, val_tokens, base, leading, boundary, log, prefix: str) -> tuple[float, float, float]:
+    best_temp = 1.0
+    best_loss = float("inf")
+    best_bpb = float("inf")
+    for temp in parse_temp_grid(args.temp_grid):
+        loss, bpb = eval_val(args, model, rank, world_size, device, val_tokens, base, leading, boundary, logit_temp=temp)
+        log(f"{prefix}_temp_grid temp:{temp:.4f} val_loss:{loss:.4f} val_bpb:{bpb:.4f}")
+        if bpb < best_bpb:
+            best_temp = temp
+            best_loss = loss
+            best_bpb = bpb
+    log(f"{prefix}_best_temp:{best_temp:.4f} val_loss:{best_loss:.4f} val_bpb:{best_bpb:.4f}")
+    return best_temp, best_loss, best_bpb
 
 
 TOKENIZER_META_FORMAT_VERSION = 1
@@ -766,7 +782,7 @@ def main() -> None:
     log(f"world_size:{world_size} grad_accum_steps:{grad_accum_steps}")
     log(f"train_batch_tokens:{args.train_batch_tokens} train_seq_len:{args.train_seq_len} iterations:{args.iterations} max_training_seconds:{args.max_training_seconds:.3f} warmdown_iters:{args.warmdown_iters}")
     log(f"optimizer:AdamW lr:{args.lr} embed_lr:{args.embed_lr} wd:{args.weight_decay} ema:{int(args.ema_enabled)}")
-    log(f"export:int6_clip:{args.int6_clip_range} lzma_preset:{args.lzma_preset} temp_scaling:{int(args.temp_scaling)} temp_grid:{args.temp_grid}")
+    log(f"export:int6_clip:{args.int6_clip_range} lzma_preset:{args.lzma_preset} temp_scaling:{int(args.temp_scaling)} temp_eval_during_train:{int(args.temp_eval_during_train)} temp_grid:{args.temp_grid}")
     log(f"seed:{args.seed}")
 
     if args.warmup_steps > 0:
@@ -814,6 +830,8 @@ def main() -> None:
         if step == 1 or step % args.val_loss_every == 0:
             val_loss, val_bpb = eval_val(args, model, rank, world_size, device, val_tokens, base_bytes_lut, leading_lut, boundary_lut)
             log(f"step:{step}/{args.iterations} val_loss:{val_loss:.4f} val_bpb:{val_bpb:.4f} elapsed_s:{elapsed_s:.1f}")
+            if args.temp_eval_during_train:
+                log_temp_sweep(args, model, rank, world_size, device, val_tokens, base_bytes_lut, leading_lut, boundary_lut, log, f"step:{step}/{args.iterations}")
 
     torch.cuda.synchronize()
     log(f"training_done steps_completed:{last_step} train_elapsed_s:{time.perf_counter() - start_time:.1f}")
