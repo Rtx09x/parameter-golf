@@ -55,6 +55,9 @@ class Hyperparameters:
     rope_fraction = float(os.environ.get("MAMBA_ROPE_FRACTION", 0.5))
     ngroups = int(os.environ.get("MAMBA_NGROUPS", 1))
     mamba_dtype = os.environ.get("MAMBA_DTYPE", "bfloat16")
+    local_attn_layers = int(os.environ.get("LOCAL_ATTN_LAYERS", 2))
+    local_attn_window = int(os.environ.get("LOCAL_ATTN_WINDOW", 128))
+    local_attn_heads = int(os.environ.get("LOCAL_ATTN_HEADS", 8))
 
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
@@ -452,6 +455,38 @@ class Mamba3ResidualBlock(nn.Module):
         return x + self.resid_scale.to(dtype=x.dtype)[None, None, :] * y
 
 
+class LocalAttentionAdapter(nn.Module):
+    def __init__(self, args: Hyperparameters):
+        super().__init__()
+        if args.model_dim % args.local_attn_heads != 0:
+            raise ValueError("MODEL_DIM must be divisible by LOCAL_ATTN_HEADS")
+        self.num_heads = args.local_attn_heads
+        self.head_dim = args.model_dim // args.local_attn_heads
+        self.window = args.local_attn_window
+        self.norm = RMSNorm()
+        self.qkv = nn.Linear(args.model_dim, 3 * args.model_dim, bias=False)
+        self.proj = nn.Linear(args.model_dim, args.model_dim, bias=False)
+        self.gate = nn.Parameter(torch.tensor(-4.0, dtype=torch.float32))
+        nn.init.zeros_(self.proj.weight)
+
+    def forward(self, x: Tensor) -> Tensor:
+        b, t, c = x.shape
+        qkv = self.qkv(self.norm(x)).view(b, t, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv.unbind(dim=2)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        attn_mask = None
+        if self.window > 0 and self.window < t:
+            row = torch.arange(t, device=x.device)[:, None]
+            col = torch.arange(t, device=x.device)[None, :]
+            attn_mask = col < (row - self.window + 1)
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=True)
+        y = y.transpose(1, 2).contiguous().view(b, t, c)
+        y = self.proj(y)
+        return x + torch.sigmoid(self.gate).to(dtype=x.dtype) * y
+
+
 class MambaGolfLM(nn.Module):
     def __init__(self, args: Hyperparameters):
         super().__init__()
@@ -464,6 +499,7 @@ class MambaGolfLM(nn.Module):
         )
         self.smear = SmearGate(args.model_dim)
         self.blocks = nn.ModuleList([Mamba3ResidualBlock(args) for _ in range(args.num_layers)])
+        self.local_adapters = nn.ModuleList([LocalAttentionAdapter(args) for _ in range(max(args.local_attn_layers, 0))])
         self.final_norm = RMSNorm()
         self.lm_head = None if args.tie_embeddings else nn.Linear(args.model_dim, args.vocab_size, bias=False)
         self.logit_softcap = args.logit_softcap
@@ -475,6 +511,8 @@ class MambaGolfLM(nn.Module):
         x = self.smear(x)
         for block in self.blocks:
             x = block(x)
+        for adapter in self.local_adapters:
+            x = adapter(x)
         return self.final_norm(x)
     def logits_from_hidden(self, x: Tensor) -> Tensor:
         if self.lm_head is None:
@@ -783,6 +821,7 @@ def main() -> None:
     ema_state = clone_ema_state(base_model) if args.ema_enabled and rank == 0 else None
 
     log(f"model:mamba3_mimo layers:{args.num_layers} dim:{args.model_dim} d_state:{args.d_state} headdim:{args.headdim} expand:{args.expand} mimo:{int(args.is_mimo)} rank:{args.mimo_rank} chunk:{args.chunk_size}")
+    log(f"local_attention:layers:{args.local_attn_layers} heads:{args.local_attn_heads} window:{args.local_attn_window}")
     log(f"model_params:{sum(p.numel() for p in base_model.parameters())}")
     log(f"world_size:{world_size} grad_accum_steps:{grad_accum_steps}")
     log(f"train_batch_tokens:{args.train_batch_tokens} train_seq_len:{args.train_seq_len} iterations:{args.iterations} max_training_seconds:{args.max_training_seconds:.3f} warmdown_iters:{args.warmdown_iters}")
