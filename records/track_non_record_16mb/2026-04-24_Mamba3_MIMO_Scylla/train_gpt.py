@@ -737,7 +737,7 @@ def main() -> None:
     log(f"train_loader:dataset:{dataset_dir.name} train_shards:{train_shards}")
     log(f"val_loader:shards pattern={args.val_files} tokens:{val_tokens.numel() - 1}")
 
-    base_model = MambaGolfLM(args).to(device=device, dtype=dtype_from_name(args.mamba_dtype))
+    base_model = MambaGolfLM(args).to(device=device)
     optimizer = build_optimizer(args, base_model)
     model = DDP(base_model, device_ids=[local_rank]) if distributed else base_model
     grad_accum_steps = 8 // world_size if 8 % world_size == 0 else 1
@@ -840,7 +840,7 @@ def main() -> None:
     with open("final_model.int6.ptz", "rb") as f:
         payload = torch.load(io.BytesIO(lzma.decompress(f.read())), map_location="cpu")
     deq_sd = dequantize_state_dict_int6(payload["w"], payload["m"])
-    eval_model = MambaGolfLM(args).to(device=device, dtype=dtype_from_name(args.mamba_dtype))
+    eval_model = MambaGolfLM(args).to(device=device)
     eval_model.load_state_dict(deq_sd, strict=True)
     eval_model.eval()
     q_loss, q_bpb = eval_val(args, eval_model, rank, world_size, device, val_tokens, base_bytes_lut, leading_lut, boundary_lut)
