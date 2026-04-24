@@ -369,13 +369,9 @@ class SmearGate(nn.Module):
         super().__init__()
         self.gate = nn.Parameter(torch.zeros(dim, dtype=torch.float32))
     def forward(self, x: Tensor) -> Tensor:
-        left = torch.roll(x, shifts=1, dims=1)
-        left[:, 0, :] = 0
-        right = torch.roll(x, shifts=-1, dims=1)
-        right[:, -1, :] = 0
-        mix = 0.5 * (left + right)
-        g = torch.sigmoid(self.gate).to(dtype=x.dtype)[None, None, :]
-        return x + g * mix
+        g = torch.sigmoid(self.gate.to(dtype=x.dtype))[None, None, :]
+        x_prev = torch.cat([torch.zeros_like(x[:, :1]), x[:, :-1]], dim=1)
+        return (1 - g) * x + g * x_prev
 
 
 class BigramHashEmbedding(nn.Module):
