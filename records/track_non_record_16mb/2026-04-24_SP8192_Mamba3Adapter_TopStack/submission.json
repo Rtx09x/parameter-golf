@@ -1,0 +1,33 @@
+{
+  "author": "Rtx09",
+  "github_id": "Rtx09x",
+  "name": "SP8192 Top Stack + Mamba-3 Adapter Majority",
+  "date": "2026-04-24",
+  "track": "non_record_16mb",
+  "val_bpb": null,
+  "val_bpb_std": null,
+  "seeds": [42],
+  "seed_results": {},
+  "hardware": "8xH100 80GB SXM",
+  "pytorch_version": "2.9.1+cu128",
+  "technique_summary": "SP8192 frontier stack with 6/11 physical blocks augmented by real Mamba-3 MIMO bottleneck adapters, plus 3-layer depth recurrence, parallel residuals, QK-Gain 5.25, MuonEq-R, score-first TTT support, GPTQ SDClip, and Brotli",
+  "compliance": {
+    "train_under_600s": false,
+    "artifact_under_16mb": null,
+    "eval_under_600s": null,
+    "no_slot": true,
+    "no_pre_quant_ttt": true,
+    "no_etlb": true,
+    "no_ngram_cache": true,
+    "score_first_ttt": true,
+    "three_seeds": false
+  },
+  "attribution": {
+    "sp8192_gptq_sdclip": "@clarkkev (PR #1394)",
+    "depth_recurrence": "@dexhunter (PR #1331, #1437)",
+    "parallel_residuals": "@Robby955 (PR #1412), @msisovic (PR #1204)",
+    "legal_ttt_framework": "@abaybektursun (PR #549), @dexhunter (PR #1413)",
+    "hyperparameter_tuning": "@X-Abhishek-X (PR #1445)",
+    "mamba3_adapter_hybrid": "@Rtx09x"
+  }
+}
