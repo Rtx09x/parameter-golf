@@ -522,6 +522,11 @@ def parse_temp_grid(grid: str) -> list[float]:
     return temps or [1.0]
 
 
+def forward_logits_any(model: nn.Module, input_ids: Tensor) -> Tensor:
+    target = model.module if isinstance(model, DDP) else model
+    return target.forward_logits(input_ids)
+
+
 def eval_val(args, model, rank, world_size, device, val_tokens, base, leading, boundary, logit_temp: float = 1.0) -> tuple[float, float]:
     seq_len = args.eval_seq_len
     local_batch_tokens = args.val_batch_size // max(world_size, 1)
@@ -546,7 +551,7 @@ def eval_val(args, model, rank, world_size, device, val_tokens, base, leading, b
                 if abs(logit_temp - 1.0) < 1e-8:
                     batch_loss = model(x, y).detach()
                 else:
-                    logits = model.forward_logits(x).float() / logit_temp
+                    logits = forward_logits_any(model, x).float() / logit_temp
                     batch_loss = F.cross_entropy(logits.reshape(-1, args.vocab_size), y.reshape(-1), reduction="mean").detach()
             n = float(y.numel())
             loss_sum += batch_loss.to(torch.float64) * n
@@ -586,7 +591,7 @@ def eval_val_sliding(args, model, rank, world_size, device, val_tokens, base, le
                 y[j] = local[1:]
                 first_score[j] = 0 if start == 0 else seq_len - stride
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"):
-                logits = model.forward_logits(x).float() / logit_temp
+                logits = forward_logits_any(model, x).float() / logit_temp
             losses = F.cross_entropy(logits.reshape(-1, args.vocab_size), y.reshape(-1), reduction="none").view(bsz, seq_len)
             for j in range(bsz):
                 s = int(first_score[j].item())
