@@ -18,7 +18,7 @@ PY
 
 install_deps() {
   python -m pip install -q --upgrade pip
-  python -m pip install -q packaging ninja einops huggingface-hub sentencepiece tokenmonster datasets tqdm brotli numpy
+  python -m pip install -q packaging ninja wheel setuptools einops huggingface-hub sentencepiece tokenmonster datasets tqdm brotli numpy
   python - <<'PY'
 import importlib.util, subprocess, sys
 
