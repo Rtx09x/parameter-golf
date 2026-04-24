@@ -176,6 +176,8 @@ run_train() {
   BIGRAM_DIM="${BIGRAM_DIM:-112}" \
   WARMDOWN_ITERS="${WARMDOWN_ITERS:-4000}" \
   LZMA_PRESET="${LZMA_PRESET:-9}" \
+  TEMP_SCALING="${TEMP_SCALING:-1}" \
+  TEMP_GRID="${TEMP_GRID:-0.85,0.90,0.95,1.00,1.05,1.10}" \
   ITERATIONS="${iterations}" \
   MAX_TRAINING_SECONDS="${max_train}" \
   VAL_LOSS_EVERY="${val_every}" \
