@@ -1,0 +1,10 @@
+{
+  "name": "Causal Diffusion-Only + Scylla (non-record)",
+  "val_bpb": null,
+  "bytes_total": null,
+  "blurb": "Non-record diffusion-only experiment using a causal denoising transformer with Scylla TokenMonster tokenizer/data, legal prefix-only BPB evaluation, unchanged byte accounting, and packed int6+LZMA export. Final BPB pending RunPod smoke/full run.",
+  "author": "Rtx09x",
+  "github_id": "Rtx09x",
+  "date": "2026-04-24",
+  "record": false
+}
