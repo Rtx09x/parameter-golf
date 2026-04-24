@@ -58,11 +58,18 @@ download_data() {
     echo "Scylla data already present at ${DATA_PATH}"
     return
   fi
-  huggingface-cli download "${HF_DATASET}" \
-    --repo-type dataset \
-    --include "fineweb_scylla/*" \
-    --include "tokenizers/scylla/*" \
-    --local-dir "${DATA_ROOT}"
+  HF_DATASET="${HF_DATASET}" DATA_ROOT="${DATA_ROOT}" python - <<'PY'
+import os
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    repo_id=os.environ["HF_DATASET"],
+    repo_type="dataset",
+    local_dir=os.environ["DATA_ROOT"],
+    allow_patterns=["fineweb_scylla/*", "tokenizers/scylla/*"],
+    local_dir_use_symlinks=False,
+)
+PY
 }
 
 run_audit() {
