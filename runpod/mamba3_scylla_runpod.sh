@@ -40,14 +40,20 @@ def has_mamba3():
             return False
 
 if not has_mamba3():
+    subprocess.call([sys.executable, "-m", "pip", "uninstall", "-y", "mamba-ssm", "causal-conv1d"])
     env = dict(__import__("os").environ)
     env["MAMBA_FORCE_BUILD"] = "TRUE"
+    env["CAUSAL_CONV1D_FORCE_BUILD"] = "TRUE"
     env.setdefault("MAX_JOBS", "8")
     subprocess.check_call([
         sys.executable, "-m", "pip", "install",
-        "--no-cache-dir", "--force-reinstall",
+        "--no-cache-dir", "--no-build-isolation", "--no-binary", ":all:", "--force-reinstall",
+        "git+https://github.com/Dao-AILab/causal-conv1d.git",
+    ], env=env)
+    subprocess.check_call([
+        sys.executable, "-m", "pip", "install",
+        "--no-cache-dir", "--no-build-isolation", "--no-binary", ":all:", "--force-reinstall",
         "git+https://github.com/state-spaces/mamba.git",
-        "--no-build-isolation",
     ], env=env)
 PY
 }
