@@ -20,7 +20,10 @@ Default V1:
 | Layers | `8` |
 | Model dim | `512` |
 | Heads | `8` |
-| MLP mult | `2.0` |
+| MLP mult | `2.4` |
+| Attention | QK-Gain `5.0` |
+| Residual style | parallel attention + MLP residual lanes |
+| Depth recurrence | repeat layers `3,4,5` once |
 | Diffusion steps | `8` |
 | Eval noise step | `8` |
 | Train/eval context | `1024` |
@@ -46,6 +49,10 @@ The current leaderboard is dominated by SP8192 stacks with recurrence, parallel 
 
 - fixed full-validation BPB,
 - Scylla byte-accounting metadata,
+- parallel residual blocks,
+- middle-layer depth recurrence with shared weights,
+- high QK gain,
+- higher default weight decay for compression headroom,
 - explicit roundtrip eval after int6+LZMA export,
 - size logging before claiming legality,
 - RunPod smoke before full training.

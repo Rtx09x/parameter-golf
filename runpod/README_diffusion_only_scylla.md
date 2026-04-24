@@ -39,5 +39,10 @@ Full defaults:
 - causal diffusion steps `8`
 - `1024` token context
 - `131,072` train tokens per optimizer step
+- `MLP_MULT=2.4`
+- `QK_GAIN_INIT=5.0`
+- `RECUR_LAYERS=3,4,5`
+- `RECUR_REPEATS=1`
+- `WEIGHT_DECAY=0.09`
 
 The model is diffusion-only in the sense that every prediction is made through the causal denoising path. Validation remains legal because `forward_logits()` receives only prefix tokens plus an independent mask/noise slot, never future validation tokens.

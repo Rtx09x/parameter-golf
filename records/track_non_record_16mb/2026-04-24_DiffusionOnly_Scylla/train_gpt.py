@@ -45,13 +45,16 @@ class Hyperparameters:
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_layers = int(os.environ.get("NUM_LAYERS", 8))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
-    mlp_mult = float(os.environ.get("MLP_MULT", 2.0))
+    mlp_mult = float(os.environ.get("MLP_MULT", 2.4))
     max_seq_len = int(os.environ.get("MAX_SEQ_LEN", 1024))
     diffusion_steps = int(os.environ.get("DIFFUSION_STEPS", 8))
     eval_noise_step = int(os.environ.get("EVAL_NOISE_STEP", os.environ.get("DIFFUSION_STEPS", 8)))
     noise_random_prob = float(os.environ.get("NOISE_RANDOM_PROB", 0.25))
     noise_prefix_prob = float(os.environ.get("NOISE_PREFIX_PROB", 0.25))
     mask_token_id = int(os.environ.get("MASK_TOKEN_ID", 0))
+    qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 5.0))
+    recur_layers = os.environ.get("RECUR_LAYERS", "3,4,5")
+    recur_repeats = int(os.environ.get("RECUR_REPEATS", 1))
 
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
@@ -61,7 +64,7 @@ class Hyperparameters:
 
     lr = float(os.environ.get("LR", 0.0025))
     embed_lr = float(os.environ.get("EMBED_LR", 0.0015))
-    weight_decay = float(os.environ.get("WEIGHT_DECAY", 0.08))
+    weight_decay = float(os.environ.get("WEIGHT_DECAY", 0.09))
     beta1 = float(os.environ.get("BETA1", 0.9))
     beta2 = float(os.environ.get("BETA2", 0.95))
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
@@ -80,6 +83,18 @@ DATAFILE_VERSION = 1
 SHARD_HEADER_BYTES = 256 * np.dtype("<i4").itemsize
 SHARD_NTOKENS_CACHE: dict[str, int] = {}
 MMAP_CACHE: dict[str, np.memmap] = {}
+
+
+def parse_recur_layers(spec: str, num_layers: int) -> list[int]:
+    out: list[int] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        idx = int(part)
+        if 0 <= idx < num_layers:
+            out.append(idx)
+    return out
 
 
 def log_once(rank: int, msg: str, logfile: str | None = None, console: bool = True) -> None:
@@ -374,6 +389,7 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = args.model_dim // args.num_heads
         self.qkv = nn.Linear(args.model_dim, 3 * args.model_dim, bias=False)
         self.out = nn.Linear(args.model_dim, args.model_dim, bias=False)
+        self.qk_gain = nn.Parameter(torch.full((args.num_heads,), float(args.qk_gain_init), dtype=torch.float32))
     def forward(self, x: Tensor) -> Tensor:
         b, t, c = x.shape
         qkv = self.qkv(x).view(b, t, 3, self.num_heads, self.head_dim)
@@ -381,6 +397,7 @@ class CausalSelfAttention(nn.Module):
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
+        q = q * self.qk_gain.to(dtype=q.dtype)[None, :, None, None]
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         y = y.transpose(1, 2).contiguous().view(b, t, c)
         return self.out(y)
@@ -431,6 +448,12 @@ class CausalDiffusionLM(nn.Module):
         self.input_proj = nn.Linear(args.model_dim * 2, args.model_dim, bias=False)
         self.smear = CausalSmearGate(args.model_dim)
         self.blocks = nn.ModuleList([DiffusionBlock(args) for _ in range(args.num_layers)])
+        recur = parse_recur_layers(args.recur_layers, args.num_layers)
+        self.block_plan = list(range(args.num_layers))
+        if recur and args.recur_repeats > 0:
+            insert_at = min(max(recur) + 1, args.num_layers)
+            repeated = recur * args.recur_repeats
+            self.block_plan = list(range(insert_at)) + repeated + list(range(insert_at, args.num_layers))
         self.final_norm = RMSNorm()
         self.lm_head = None if args.tie_embeddings else nn.Linear(args.model_dim, args.vocab_size, bias=False)
         self.logit_softcap = args.logit_softcap
@@ -463,8 +486,8 @@ class CausalDiffusionLM(nn.Module):
         h = h + self.time_emb(step_ids) + self.pos_emb[: input_ids.size(1)].to(dtype=h.dtype)[None, :, :]
         x = F.rms_norm(h, (h.size(-1),))
         x = self.smear(x)
-        for block in self.blocks:
-            x = block(x)
+        for block_idx in self.block_plan:
+            x = self.blocks[block_idx](x)
         return self.final_norm(x)
     def logits_from_hidden(self, x: Tensor) -> Tensor:
         if self.lm_head is None:
@@ -758,8 +781,9 @@ def main() -> None:
     log(
         f"model:causal_diffusion_only layers:{args.num_layers} dim:{args.model_dim} "
         f"heads:{args.num_heads} mlp_mult:{args.mlp_mult} diffusion_steps:{args.diffusion_steps} "
-        f"eval_noise_step:{args.eval_noise_step}"
+        f"eval_noise_step:{args.eval_noise_step} qk_gain:{args.qk_gain_init}"
     )
+    log(f"block_plan:{','.join(str(i) for i in base_model.block_plan)} recur_layers:{args.recur_layers} repeats:{args.recur_repeats}")
     log(
         f"noise:mask_token_id:{args.mask_token_id} random_prob:{args.noise_random_prob:.4f} "
         f"prefix_prob:{args.noise_prefix_prob:.4f}"
