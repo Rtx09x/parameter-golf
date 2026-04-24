@@ -155,6 +155,7 @@ case "${MODE}" in
     download_data
     run_audit
     python "${REPO_ROOT}/runpod/mamba3_forward_smoke.py"
+    REPO_ROOT="${REPO_ROOT}" python "${REPO_ROOT}/runpod/mamba3_causality_smoke.py"
     run_train smoke
     ;;
   full)
@@ -162,6 +163,7 @@ case "${MODE}" in
     download_data
     run_audit
     python "${REPO_ROOT}/runpod/mamba3_forward_smoke.py"
+    REPO_ROOT="${REPO_ROOT}" python "${REPO_ROOT}/runpod/mamba3_causality_smoke.py"
     run_train full
     ;;
   *)
