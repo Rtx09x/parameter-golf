@@ -22,10 +22,18 @@ install_deps() {
   python - <<'PY'
 import importlib.util, subprocess, sys
 
-if importlib.util.find_spec("torch") is None:
+def torch_needs_pin():
+    try:
+        import torch
+        return not torch.__version__.startswith("2.9.1")
+    except Exception:
+        return True
+
+if torch_needs_pin():
     subprocess.check_call([
         sys.executable, "-m", "pip", "install", "-q",
-        "torch==2.9.1", "--index-url", "https://download.pytorch.org/whl/cu128",
+        "--force-reinstall", "torch==2.9.1",
+        "--index-url", "https://download.pytorch.org/whl/cu128",
     ])
 
 def has_mamba3():
@@ -47,12 +55,12 @@ if not has_mamba3():
     env.setdefault("MAX_JOBS", "8")
     subprocess.check_call([
         sys.executable, "-m", "pip", "install",
-        "--no-cache-dir", "--no-build-isolation", "--no-binary", ":all:", "--force-reinstall",
+        "--no-cache-dir", "--no-build-isolation", "--no-deps", "--no-binary", ":all:", "--force-reinstall",
         "git+https://github.com/Dao-AILab/causal-conv1d.git",
     ], env=env)
     subprocess.check_call([
         sys.executable, "-m", "pip", "install",
-        "--no-cache-dir", "--no-build-isolation", "--no-binary", ":all:", "--force-reinstall",
+        "--no-cache-dir", "--no-build-isolation", "--no-deps", "--no-binary", ":all:", "--force-reinstall",
         "git+https://github.com/state-spaces/mamba.git",
     ], env=env)
 PY
