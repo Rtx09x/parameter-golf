@@ -1,0 +1,10 @@
+{
+  "name": "Scylla + Segment-State Adapter (non-record)",
+  "val_bpb": null,
+  "bytes_total": null,
+  "blurb": "Non-record architecture experiment: current Scylla record stack plus a tiny boundary-conditioned causal state adapter on late layers. Tokenizer metadata is used only as a model feature; validation byte accounting is unchanged. Full training not yet run.",
+  "author": "Rtx09x",
+  "github_id": "Rtx09x",
+  "date": "2026-04-24",
+  "record": false
+}
