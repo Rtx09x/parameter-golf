@@ -56,6 +56,7 @@ class Hyperparameters:
     ngroups = int(os.environ.get("MAMBA_NGROUPS", 1))
     mamba_dtype = os.environ.get("MAMBA_DTYPE", "bfloat16")
     local_attn_layers = int(os.environ.get("LOCAL_ATTN_LAYERS", 2))
+    local_attn_dim = int(os.environ.get("LOCAL_ATTN_DIM", 256))
     local_attn_window = int(os.environ.get("LOCAL_ATTN_WINDOW", 128))
     local_attn_heads = int(os.environ.get("LOCAL_ATTN_HEADS", 8))
 
@@ -458,14 +459,16 @@ class Mamba3ResidualBlock(nn.Module):
 class LocalAttentionAdapter(nn.Module):
     def __init__(self, args: Hyperparameters):
         super().__init__()
-        if args.model_dim % args.local_attn_heads != 0:
-            raise ValueError("MODEL_DIM must be divisible by LOCAL_ATTN_HEADS")
+        inner_dim = args.local_attn_dim if args.local_attn_dim > 0 else args.model_dim
+        if inner_dim % args.local_attn_heads != 0:
+            raise ValueError("LOCAL_ATTN_DIM must be divisible by LOCAL_ATTN_HEADS")
         self.num_heads = args.local_attn_heads
-        self.head_dim = args.model_dim // args.local_attn_heads
+        self.inner_dim = inner_dim
+        self.head_dim = inner_dim // args.local_attn_heads
         self.window = args.local_attn_window
         self.norm = RMSNorm()
-        self.qkv = nn.Linear(args.model_dim, 3 * args.model_dim, bias=False)
-        self.proj = nn.Linear(args.model_dim, args.model_dim, bias=False)
+        self.qkv = nn.Linear(args.model_dim, 3 * inner_dim, bias=False)
+        self.proj = nn.Linear(inner_dim, args.model_dim, bias=False)
         self.gate = nn.Parameter(torch.tensor(-4.0, dtype=torch.float32))
         nn.init.zeros_(self.proj.weight)
 
@@ -482,7 +485,7 @@ class LocalAttentionAdapter(nn.Module):
             col = torch.arange(t, device=x.device)[None, :]
             attn_mask = col < (row - self.window + 1)
         y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=True)
-        y = y.transpose(1, 2).contiguous().view(b, t, c)
+        y = y.transpose(1, 2).contiguous().view(b, t, self.inner_dim)
         y = self.proj(y)
         return x + torch.sigmoid(self.gate).to(dtype=x.dtype) * y
 
@@ -821,7 +824,7 @@ def main() -> None:
     ema_state = clone_ema_state(base_model) if args.ema_enabled and rank == 0 else None
 
     log(f"model:mamba3_mimo layers:{args.num_layers} dim:{args.model_dim} d_state:{args.d_state} headdim:{args.headdim} expand:{args.expand} mimo:{int(args.is_mimo)} rank:{args.mimo_rank} chunk:{args.chunk_size}")
-    log(f"local_attention:layers:{args.local_attn_layers} heads:{args.local_attn_heads} window:{args.local_attn_window}")
+    log(f"local_attention:layers:{args.local_attn_layers} dim:{args.local_attn_dim} heads:{args.local_attn_heads} window:{args.local_attn_window}")
     log(f"model_params:{sum(p.numel() for p in base_model.parameters())}")
     log(f"world_size:{world_size} grad_accum_steps:{grad_accum_steps}")
     log(f"train_batch_tokens:{args.train_batch_tokens} train_seq_len:{args.train_seq_len} iterations:{args.iterations} max_training_seconds:{args.max_training_seconds:.3f} warmdown_iters:{args.warmdown_iters}")

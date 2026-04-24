@@ -30,9 +30,10 @@ Default V1:
 | Tokenizer | Scylla TokenMonster |
 | Vocab size | `998` |
 | Extra input features | BigramHash `3072 x 112`, SmearGate |
+| Hybrid adapters | `2` causal local-attention adapters, low-rank dim `256`, window `128` |
 | TTT | off |
 
-The model is a stack of RMSNorm + Mamba-3 residual blocks with tied token embedding/head.
+The model is a stack of RMSNorm + Mamba-3 residual blocks with tied token embedding/head. The local-attention adapters are deliberately small and sit after the Mamba-3 trunk; the backbone remains Mamba-3 while the adapters provide exact local next-token ranking help.
 
 ## Proof Run
 
