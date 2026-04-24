@@ -33,6 +33,7 @@ class Hyperparameters:
     iterations = int(os.environ.get("ITERATIONS", 20000))
     max_training_seconds = float(os.environ.get("MAX_TRAINING_SECONDS", os.environ.get("MAX_WALLCLOCK_SECONDS", 4800.0)))
     warmup_steps = int(os.environ.get("WARMUP_STEPS", 3))
+    warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 4000))
     train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 100))
     val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 1000))
     train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 786_432))
@@ -58,7 +59,7 @@ class Hyperparameters:
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
-    bigram_vocab_size = int(os.environ.get("BIGRAM_VOCAB_SIZE", 2816))
+    bigram_vocab_size = int(os.environ.get("BIGRAM_VOCAB_SIZE", 3072))
     bigram_dim = int(os.environ.get("BIGRAM_DIM", 112))
 
     lr = float(os.environ.get("LR", 0.0025))
@@ -74,6 +75,7 @@ class Hyperparameters:
 
     int6_clip_range = int(os.environ.get("INT6_CLIP_RANGE", 31))
     quant_min_numel = int(os.environ.get("QUANT_MIN_NUMEL", 256))
+    lzma_preset = int(os.environ.get("LZMA_PRESET", 9))
 
 
 TOKENIZER_META_FORMAT_VERSION = 1
@@ -670,11 +672,10 @@ def build_optimizer(args: Hyperparameters, model: nn.Module):
 def lr_multiplier(args: Hyperparameters, step: int, elapsed_s: float) -> float:
     if step <= args.warmup_steps:
         return max(step / max(args.warmup_steps, 1), 1e-4)
-    if args.max_training_seconds > 0:
-        remaining = max(args.max_training_seconds - elapsed_s, 0.0)
-        warmdown_s = max(args.max_training_seconds * args.warmdown_frac, 1.0)
-        return min(1.0, remaining / warmdown_s) if remaining <= warmdown_s else 1.0
-    warmdown_steps = max(int(args.iterations * args.warmdown_frac), 1)
+    warmdown_steps = args.warmdown_iters
+    if warmdown_steps <= 0:
+        warmdown_steps = max(int(args.iterations * args.warmdown_frac), 1)
+    warmdown_steps = min(max(warmdown_steps, 1), max(args.iterations, 1))
     start = max(args.iterations - warmdown_steps, 0)
     return max((args.iterations - step) / warmdown_steps, 0.0) if step >= start else 1.0
 
@@ -744,8 +745,9 @@ def main() -> None:
     log(f"model:mamba3_mimo layers:{args.num_layers} dim:{args.model_dim} d_state:{args.d_state} headdim:{args.headdim} expand:{args.expand} mimo:{int(args.is_mimo)} rank:{args.mimo_rank} chunk:{args.chunk_size}")
     log(f"model_params:{sum(p.numel() for p in base_model.parameters())}")
     log(f"world_size:{world_size} grad_accum_steps:{grad_accum_steps}")
-    log(f"train_batch_tokens:{args.train_batch_tokens} train_seq_len:{args.train_seq_len} iterations:{args.iterations} max_training_seconds:{args.max_training_seconds:.3f}")
+    log(f"train_batch_tokens:{args.train_batch_tokens} train_seq_len:{args.train_seq_len} iterations:{args.iterations} max_training_seconds:{args.max_training_seconds:.3f} warmdown_iters:{args.warmdown_iters}")
     log(f"optimizer:AdamW lr:{args.lr} embed_lr:{args.embed_lr} wd:{args.weight_decay} ema:{int(args.ema_enabled)}")
+    log(f"export:int6_clip:{args.int6_clip_range} lzma_preset:{args.lzma_preset}")
     log(f"seed:{args.seed}")
 
     if args.warmup_steps > 0:
@@ -800,20 +802,34 @@ def main() -> None:
     mem_reserved = torch.cuda.max_memory_reserved() // (1024 * 1024)
     log(f"peak memory allocated:{mem_alloc} MiB reserved:{mem_reserved} MiB")
 
+    raw_state_cpu = {k: v.detach().cpu().clone() for k, v in base_model.state_dict().items()}
+    raw_loss, raw_bpb = eval_val(args, model, rank, world_size, device, val_tokens, base_bytes_lut, leading_lut, boundary_lut)
+    log(f"DIAGNOSTIC raw val_loss:{raw_loss:.4f} val_bpb:{raw_bpb:.4f}")
+    export_choice = "raw"
+    export_loss, export_bpb = raw_loss, raw_bpb
+
     if args.ema_enabled:
         if distributed:
             dist.barrier()
         if rank == 0:
-            log("ema:applying EMA weights")
+            log("ema:evaluating EMA weights")
             apply_ema_state(base_model, ema_state)
         if distributed:
             obj = [base_model.state_dict() if rank == 0 else None]
             dist.broadcast_object_list(obj, src=0)
             if rank != 0:
                 base_model.load_state_dict(obj[0], strict=True)
+        ema_loss, ema_bpb = eval_val(args, model, rank, world_size, device, val_tokens, base_bytes_lut, leading_lut, boundary_lut)
+        log(f"DIAGNOSTIC ema val_loss:{ema_loss:.4f} val_bpb:{ema_bpb:.4f}")
+        if ema_bpb < raw_bpb:
+            export_choice = "ema"
+            export_loss, export_bpb = ema_loss, ema_bpb
+        else:
+            base_model.load_state_dict(raw_state_cpu, strict=True)
+            if distributed:
+                dist.barrier()
 
-    diag_loss, diag_bpb = eval_val(args, model, rank, world_size, device, val_tokens, base_bytes_lut, leading_lut, boundary_lut)
-    log(f"DIAGNOSTIC post_train val_loss:{diag_loss:.4f} val_bpb:{diag_bpb:.4f}")
+    log(f"export_choice:{export_choice} val_loss:{export_loss:.4f} val_bpb:{export_bpb:.4f}")
 
     if rank == 0:
         export_sd = {k: v.detach().cpu() for k, v in base_model.state_dict().items()}
@@ -825,7 +841,7 @@ def main() -> None:
         q_state, q_meta = quantize_state_dict_int6(export_sd, args.int6_clip_range, args.quant_min_numel)
         buf = io.BytesIO()
         torch.save({"w": q_state, "m": q_meta}, buf)
-        quant_blob = lzma.compress(buf.getvalue(), preset=6)
+        quant_blob = lzma.compress(buf.getvalue(), preset=args.lzma_preset)
         with open("final_model.int6.ptz", "wb") as f:
             f.write(quant_blob)
         log(f"Serialized model int6pack+lzma: {len(quant_blob)} bytes")

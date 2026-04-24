@@ -21,6 +21,7 @@ install_deps() {
   python -m pip install -q packaging ninja wheel setuptools einops huggingface-hub sentencepiece tokenmonster datasets tqdm brotli numpy
   python - <<'PY'
 import importlib.util, subprocess, sys
+from pathlib import Path
 
 def torch_needs_pin():
     try:
@@ -47,8 +48,46 @@ def has_mamba3():
         except Exception:
             return False
 
+def try_install_mamba3_cache():
+    import os
+    import shutil
+    import tarfile
+    try:
+        from huggingface_hub import hf_hub_download
+    except Exception as exc:
+        print(f"mamba3_cache: huggingface_hub unavailable: {exc}", flush=True)
+        return False
+    repo_id = os.environ.get("PGOLF_MAMBA3_WHEEL_REPO", "Rtx09/8gpu")
+    filename = os.environ.get("PGOLF_MAMBA3_WHEEL_FILE", "pgolf_mamba3_FIXED_wheels_py312_torch291_cu128.tar.gz")
+    workdir = Path(os.environ.get("PGOLF_MAMBA3_WHEEL_DIR", "/workspace/pgolf_mamba3_wheels"))
+    try:
+        archive = hf_hub_download(
+            repo_id=repo_id,
+            repo_type="dataset",
+            filename=filename,
+            local_dir=str(workdir),
+        )
+        extract_dir = workdir / "extract"
+        if extract_dir.exists():
+            shutil.rmtree(extract_dir)
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archive, "r:gz") as tar:
+            tar.extractall(extract_dir)
+        subprocess.check_call([
+            sys.executable, "-m", "pip", "install", "-q",
+            "--force-reinstall", "--no-index", "--no-deps",
+            f"--find-links={extract_dir / 'wheels'}",
+            "causal-conv1d", "mamba-ssm",
+        ])
+        print(f"mamba3_cache: installed {filename} from {repo_id}", flush=True)
+        return has_mamba3()
+    except Exception as exc:
+        print(f"mamba3_cache: unavailable, falling back to source build: {exc}", flush=True)
+        return False
+
 if not has_mamba3():
     subprocess.call([sys.executable, "-m", "pip", "uninstall", "-y", "mamba-ssm", "causal-conv1d"])
+if not has_mamba3() and not try_install_mamba3_cache():
     env = dict(__import__("os").environ)
     env["MAMBA_FORCE_BUILD"] = "TRUE"
     env["CAUSAL_CONV1D_FORCE_BUILD"] = "TRUE"
@@ -107,7 +146,7 @@ run_train() {
   else
     nproc="${NPROC_PER_NODE:-$(detect_gpus)}"
     iterations="${ITERATIONS:-20000}"
-    max_train="${MAX_TRAINING_SECONDS:-4800}"
+    max_train="${MAX_TRAINING_SECONDS:-999999}"
     val_every="${VAL_LOSS_EVERY:-1000}"
     log_every="${TRAIN_LOG_EVERY:-100}"
     run_sliding="${RUN_SLIDING_EVAL:-1}"
@@ -127,8 +166,10 @@ run_train() {
   MAMBA_IS_MIMO="${MAMBA_IS_MIMO:-1}" \
   MAMBA_MIMO_RANK="${MAMBA_MIMO_RANK:-4}" \
   MAMBA_CHUNK_SIZE="${MAMBA_CHUNK_SIZE:-16}" \
-  BIGRAM_VOCAB_SIZE="${BIGRAM_VOCAB_SIZE:-2816}" \
+  BIGRAM_VOCAB_SIZE="${BIGRAM_VOCAB_SIZE:-3072}" \
   BIGRAM_DIM="${BIGRAM_DIM:-112}" \
+  WARMDOWN_ITERS="${WARMDOWN_ITERS:-4000}" \
+  LZMA_PRESET="${LZMA_PRESET:-9}" \
   ITERATIONS="${iterations}" \
   MAX_TRAINING_SECONDS="${max_train}" \
   VAL_LOSS_EVERY="${val_every}" \

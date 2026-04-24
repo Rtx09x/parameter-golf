@@ -1,6 +1,6 @@
 # Non-record: Mamba-3 MIMO + Scylla
 
-**Status:** implementation ready for RunPod smoke/full runs. No final BPB has been produced yet.
+**Status:** proof run passed; upgraded for the 8-GPU full run.
 
 This submission is a real state-space architecture lane for Parameter Golf. It uses the official Mamba-3 block from `state-spaces/mamba` and keeps the strongest proven parts of the current public stack around it:
 
@@ -29,10 +29,23 @@ Default V1:
 | RoPE fraction | `0.5` |
 | Tokenizer | Scylla TokenMonster |
 | Vocab size | `998` |
-| Extra input features | BigramHash `2816 x 112`, SmearGate |
+| Extra input features | BigramHash `3072 x 112`, SmearGate |
 | TTT | off |
 
 The model is a stack of RMSNorm + Mamba-3 residual blocks with tied token embedding/head.
+
+## Proof Run
+
+A causal, export-legal 1-GPU proof run completed before the 8-GPU patch:
+
+```text
+steps_completed: 2045
+step:2000 val_loss:2.2939 val_bpb:1.2832
+final_int6_roundtrip_exact val_loss:2.30995808 val_bpb:1.29215887
+Total submission size int6pack+lzma: 14469827 bytes
+```
+
+This proved the Mamba-3 lane trains, exports, and stays under 16MB. The run used a wall-clock LR schedule that decayed too early, so the 8-GPU path now uses step-based warmdown.
 
 ## Run Policy
 
@@ -42,10 +55,15 @@ Default full run:
 
 ```bash
 ITERATIONS=20000
-MAX_TRAINING_SECONDS=4800
+MAX_TRAINING_SECONDS=999999
+WARMDOWN_ITERS=4000
+BIGRAM_VOCAB_SIZE=3072
+LZMA_PRESET=9
 ```
 
-So the run trains for up to 20k steps, but stops the train loop after about 80 minutes and then continues with EMA, int6 export, roundtrip eval, and optional sliding eval.
+The training wall clock still only gates the train loop if explicitly set, but the learning-rate schedule is step-based. This prevents short proof budgets from crushing the LR early.
+
+Export evaluates raw and EMA weights, logs both, and exports whichever has the better validation BPB.
 
 ## Why This Is Non-record
 
