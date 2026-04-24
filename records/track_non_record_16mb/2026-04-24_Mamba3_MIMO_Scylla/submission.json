@@ -1,0 +1,10 @@
+{
+  "name": "Mamba-3 MIMO + Scylla (non-record)",
+  "val_bpb": null,
+  "bytes_total": null,
+  "blurb": "Non-record state-space architecture experiment using official Mamba-3 MIMO blocks with Scylla TokenMonster tokenizer/data, unchanged byte accounting, and packed int6+LZMA export. Final BPB pending RunPod full run.",
+  "author": "Rtx09x",
+  "github_id": "Rtx09x",
+  "date": "2026-04-24",
+  "record": false
+}
