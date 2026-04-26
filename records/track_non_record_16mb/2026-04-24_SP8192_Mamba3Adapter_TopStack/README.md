@@ -6,7 +6,7 @@ This is a non-record hybrid experiment built from the current SP8192 frontier re
 
 - Keeps SP8192 tokenizer/data path, 11x512 transformer stack, XSA, 3-layer depth recurrence, parallel residuals, QK gain, MuonEq-R, GPTQ SDClip, Brotli compression, and legal score-first TTT support.
 - Adds real Mamba-3 MIMO adapters to the last 6 of 11 physical blocks by default, so more than half the stack is Mamba-augmented.
-- Defaults the adapter to a bottleneck dimension of 64 with d_state 64, headdim 32, MIMO rank 2.
+- Defaults the adapter to a bottleneck dimension of 48 with d_state 64, headdim 32, MIMO rank 2. The first 64-dim smoke was functional but exported at 16,212,587 bytes, so 48 is the legal-size default.
 - Uses `MLP_MULT=3.75` in the RunPod recipe to buy artifact room for the Mamba path.
 - Disables `torch.compile` by default (`COMPILE_ENABLED=0`) because TileLang Mamba kernels are less reliable under Dynamo fullgraph capture.
 
