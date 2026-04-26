@@ -14,6 +14,27 @@ This is a non-record hybrid experiment built from the current SP8192 frontier re
 
 Use `runpod/sp8192_mamba_topstack_runpod.sh proof` for a 2k-step sanity run. If it is not clearly ahead of the Scylla Mamba line by 1k-2k steps, do not spend the full run.
 
+## Sparse training option
+
+Magnitude sparsity is available but disabled by default. It linearly ramps from `SPARSE_START_STEP` to `SPARSE_END_STEP`, reapplies masks after optimizer steps, and only touches matrices selected by `SPARSE_INCLUDE`.
+
+Recommended Mamba-capacity probe:
+
+```bash
+MAMBA_ADAPTER_DIM=56 SPARSE_ENABLED=1 SPARSE_TARGET=0.10 SPARSE_INCLUDE=mamba_adapter \
+  bash runpod/sp8192_mamba_topstack_runpod.sh proof
+```
+
+Riskier big-sparse probe:
+
+```bash
+MODEL_DIM=608 MLP_MULT=3.75 MAMBA_ADAPTER_DIM=64 \
+SPARSE_ENABLED=1 SPARSE_TARGET=0.40 SPARSE_START_STEP=1000 SPARSE_END_STEP=6000 SPARSE_INCLUDE=mlp,attn \
+  bash runpod/sp8192_mamba_topstack_runpod.sh proof
+```
+
+This is the intended ~50M-parameter big sparse probe. The sparsity schedule leaves embeddings, norms, gates, and tiny scalar/control tensors dense.
+
 ## Default full run
 
 Use `runpod/sp8192_mamba_topstack_runpod.sh full` on 8xH100. This trains the hybrid with SP8192 data and exports a legal-style artifact.
